@@ -127,7 +127,7 @@ namespace dlib
                 bool move_next (
                 ) const { return list.move_next(); }
 
-                size_t size (
+                unsigned long size (
                 ) const { return list.size(); }
             };
 
@@ -357,7 +357,6 @@ namespace dlib
 
 
                 case empty_element: is_empty = true;
-                                    // fall through
                 case element_start:
                     {
                         seen_root_tag = true;

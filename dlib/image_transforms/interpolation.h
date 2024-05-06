@@ -3,9 +3,6 @@
 #ifndef DLIB_INTERPOlATIONh_
 #define DLIB_INTERPOlATIONh_ 
 
-#include "../threads.h"
-#include <algorithm>
-
 #include "interpolation_abstract.h"
 #include "../pixel.h"
 #include "../matrix.h"
@@ -14,8 +11,6 @@
 #include "../simd.h"
 #include "../image_processing/full_object_detection.h"
 #include <limits>
-#include <array>
-#include "../rand.h"
 
 namespace dlib
 {
@@ -228,6 +223,12 @@ namespace dlib
 
     class interpolate_bilinear
     {
+        template <typename T>
+        struct is_rgb_image 
+        {
+            const static bool value = pixel_traits<typename T::pixel_type>::rgb;
+        };
+
     public:
 
         template <typename T, typename image_view_type, typename pixel_type>
@@ -324,6 +325,11 @@ namespace dlib
 
     class interpolate_quadratic
     {
+        template <typename T>
+        struct is_rgb_image 
+        {
+            const static bool value = pixel_traits<typename T::pixel_type>::rgb;
+        };
 
     public:
 
@@ -694,6 +700,11 @@ namespace dlib
 
 // ----------------------------------------------------------------------------------------
 
+    template <typename image_type>
+    struct is_rgb_image { const static bool value = pixel_traits<typename image_traits<image_type>::pixel_type>::rgb; };
+    template <typename image_type>
+    struct is_grayscale_image { const static bool value = pixel_traits<typename image_traits<image_type>::pixel_type>::grayscale; };
+
     // This is an optimized version of resize_image for the case where bilinear
     // interpolation is used.
     template <
@@ -896,12 +907,11 @@ namespace dlib
 // ----------------------------------------------------------------------------------------
 
     template <
-        typename image_type1,
-        typename image_type2
+        typename image_type
         >
-    typename enable_if_c<is_rgb_image<image_type1>::value && is_rgb_image<image_type2>::value >::type resize_image (
-        const image_type1& in_img_,
-        image_type2& out_img_,
+    typename enable_if<is_rgb_image<image_type> >::type resize_image (
+        const image_type& in_img_,
+        image_type& out_img_,
         interpolate_bilinear
     )
     {
@@ -912,14 +922,14 @@ namespace dlib
             << "\n\t is_same_object(in_img_, out_img_):  " << is_same_object(in_img_, out_img_)
             );
 
-        const_image_view<image_type1> in_img(in_img_);
-        image_view<image_type2> out_img(out_img_);
+        const_image_view<image_type> in_img(in_img_);
+        image_view<image_type> out_img(out_img_);
 
         if (out_img.size() == 0 || in_img.size() == 0)
             return;
 
 
-        typedef typename image_traits<image_type1>::pixel_type T;
+        typedef typename image_traits<image_type>::pixel_type T;
         const double x_scale = (in_img.nc()-1)/(double)std::max<long>((out_img.nc()-1),1);
         const double y_scale = (in_img.nr()-1)/(double)std::max<long>((out_img.nr()-1),1);
         double y = -y_scale;
@@ -1146,20 +1156,11 @@ namespace dlib
         }
 
         inline rectangle tform_object (
-            const rectangle_transform& tran,
+            const point_transform_affine& tran,
             const rectangle& rect
         )
         {
-            return tran(rect);
-        }
-
-        inline mmod_rect tform_object (
-            const rectangle_transform& tran,
-            mmod_rect rect
-        )
-        {
-            rect.rect = tform_object(tran, rect.rect);
-            return rect;
+            return centered_rect(tran(center(rect)), rect.width(), rect.height());
         }
 
         inline full_object_detection tform_object(
@@ -1171,10 +1172,7 @@ namespace dlib
             parts.reserve(obj.num_parts());
             for (unsigned long i = 0; i < obj.num_parts(); ++i)
             {
-                if (obj.part(i) != OBJECT_PART_NOT_PRESENT)
-                    parts.push_back(tran(obj.part(i)));
-                else
-                    parts.push_back(OBJECT_PART_NOT_PRESENT);
+                parts.push_back(tran(obj.part(i)));
             }
             return full_object_detection(tform_object(tran,obj.get_rect()), parts);
         }
@@ -1211,7 +1209,7 @@ namespace dlib
             for (unsigned long i = 0; i < objects[j].size(); ++i)
                 rects.push_back(impl::tform_object(tran, objects[j][i]));
 
-            images.push_back(std::move(temp));
+            images.push_back(temp);
             objects.push_back(rects);
         }
     }
@@ -1247,7 +1245,7 @@ namespace dlib
         for (unsigned long j = 0; j < num; ++j)
         {
             const point_transform_affine tran = flip_image_left_right(images[j], temp);
-            images.push_back(std::move(temp));
+            images.push_back(temp);
 
             rects.clear();
             for (unsigned long i = 0; i < objects[j].size(); ++i)
@@ -1458,12 +1456,12 @@ namespace dlib
         typename image_array_type::value_type temp;
         for (unsigned long i = 0; i < images.size(); ++i)
         {
-            const rectangle_transform tran = rotate_image(images[i], temp, angle);
+            const point_transform_affine tran = rotate_image(images[i], temp, angle);
             swap(temp, images[i]);
             for (unsigned long j = 0; j < objects[i].size(); ++j)
             {
                 const rectangle rect = objects[i][j];
-                objects[i][j] = tran(rect);
+                objects[i][j] = centered_rect(tran(center(rect)), rect.width(), rect.height());
             }
         }
     }
@@ -1489,17 +1487,17 @@ namespace dlib
         typename image_array_type::value_type temp;
         for (unsigned long i = 0; i < images.size(); ++i)
         {
-            const rectangle_transform tran = rotate_image(images[i], temp, angle);
+            const point_transform_affine tran = rotate_image(images[i], temp, angle);
             swap(temp, images[i]);
             for (unsigned long j = 0; j < objects[i].size(); ++j)
             {
                 const rectangle rect = objects[i][j];
-                objects[i][j] = tran(rect);
+                objects[i][j] = centered_rect(tran(center(rect)), rect.width(), rect.height());
             }
             for (unsigned long j = 0; j < objects2[i].size(); ++j)
             {
                 const rectangle rect = objects2[i][j];
-                objects2[i][j] = tran(rect);
+                objects2[i][j] = centered_rect(tran(center(rect)), rect.width(), rect.height());
             }
         }
     }
@@ -1532,29 +1530,33 @@ namespace dlib
             << "\n\t objects2.size():   " << objects2.size() 
             );
 
-        using namespace impl;
+        image_array_type new_images;
+        std::vector<std::vector<T> > new_objects;
+        std::vector<std::vector<U> > new_objects2;
 
-        image_array_type new_images(images.size() * angles.size());
-        std::vector<std::vector<T>> new_objects(images.size() * angles.size());
-        std::vector<std::vector<U>> new_objects2(images.size() * angles.size());
+        using namespace impl; 
 
-        dlib::parallel_for(0, images.size(), [&](long j) {
-            typename image_array_type::value_type temp;
-
-            long dst_base = j * angles.size();
-            for (long i = 0; i < angles.size(); ++i)
+        std::vector<T> objtemp;
+        std::vector<U> objtemp2;
+        typename image_array_type::value_type temp;
+        for (long i = 0; i < angles.size(); ++i)
+        {
+            for (unsigned long j = 0; j < images.size(); ++j)
             {
-                long dst = dst_base + i;
                 const point_transform_affine tran = rotate_image(images[j], temp, angles(i));
-                exchange(new_images[dst], temp);
+                new_images.push_back(temp);
 
+                objtemp.clear();
                 for (unsigned long k = 0; k < objects[j].size(); ++k)
-                    new_objects[dst].push_back(tform_object(tran, objects[j][k]));
+                    objtemp.push_back(tform_object(tran, objects[j][k]));
+                new_objects.push_back(objtemp);
 
+                objtemp2.clear();
                 for (unsigned long k = 0; k < objects2[j].size(); ++k)
-                    new_objects2[dst].push_back(tform_object(tran, objects2[j][k]));
+                    objtemp2.push_back(tform_object(tran, objects2[j][k]));
+                new_objects2.push_back(objtemp2);
             }
-        });
+        }
 
         new_images.swap(images);
         new_objects.swap(objects);
@@ -1748,18 +1750,11 @@ namespace dlib
             unsigned long size
         ) 
         {
-            if (rect.is_empty())
-            {
-                cols = rows = std::round(std::sqrt((double)size));
-            }
-            else
-            {
-                const double relative_size = std::sqrt(size/(double)rect.area());
-                rows = static_cast<unsigned long>(rect.height()*relative_size + 0.5);
-                cols  = static_cast<unsigned long>(size/(double)rows + 0.5);
-                rows = std::max(1ul,rows);
-                cols = std::max(1ul,cols);
-            }
+            const double relative_size = std::sqrt(size/(double)rect.area());
+            rows = static_cast<unsigned long>(rect.height()*relative_size + 0.5);
+            cols  = static_cast<unsigned long>(size/(double)rows + 0.5);
+            rows = std::max(1ul,rows);
+            cols = std::max(1ul,cols);
         }
     };
 
@@ -1793,12 +1788,7 @@ namespace dlib
         full_object_detection res(det);
         // map the parts
         for (unsigned long l = 0; l < det.num_parts(); ++l)
-        {
-            if (det.part(l) != OBJECT_PART_NOT_PRESENT)
-                res.part(l) = tform(det.part(l));
-            else
-                res.part(l) = OBJECT_PART_NOT_PRESENT;
-        }
+            res.part(l) = tform(det.part(l));
         // map the main rectangle
         rectangle rect;
         rect += tform(det.get_rect().tl_corner());
@@ -1856,14 +1846,12 @@ namespace dlib
 
     template <
         typename image_type1,
-        typename image_type2,
-        typename interpolation_type
+        typename image_type2
         >
     void extract_image_chips (
         const image_type1& img,
         const std::vector<chip_details>& chip_locations,
-        dlib::array<image_type2>& chips,
-        const interpolation_type& interp
+        dlib::array<image_type2>& chips
     )
     {
         // make sure requires clause is not broken
@@ -1959,56 +1947,10 @@ namespace dlib
 
                 // now extract the actual chip
                 if (level == -1)
-                    transform_image(sub_image(img,bounding_box),chips[i],interp,trns);
+                    transform_image(sub_image(img,bounding_box),chips[i],interpolate_bilinear(),trns);
                 else
-                    transform_image(levels[level],chips[i],interp,trns);
+                    transform_image(levels[level],chips[i],interpolate_bilinear(),trns);
             }
-        }
-    }
-
-// ----------------------------------------------------------------------------------------
-
-    template <
-        typename image_type1,
-        typename image_type2
-        >
-    void extract_image_chips(
-        const image_type1& img,
-        const std::vector<chip_details>& chip_locations,
-        dlib::array<image_type2>& chips
-    )
-    {
-        extract_image_chips(img, chip_locations, chips, interpolate_bilinear());
-    }
-
-// ----------------------------------------------------------------------------------------
-
-    template <
-        typename image_type1,
-        typename image_type2,
-        typename interpolation_type
-        >
-    void extract_image_chip (
-        const image_type1& img,
-        const chip_details& location,
-        image_type2& chip,
-        const interpolation_type& interp
-    )
-    {
-        // If the chip doesn't have any rotation or scaling then use the basic version of
-        // chip extraction that just does a fast copy.
-        if (location.angle == 0 && 
-            location.rows == location.rect.height() &&
-            location.cols == location.rect.width())
-        {
-            impl::basic_extract_image_chip(img, location.rect, chip);
-        }
-        else
-        {
-            std::vector<chip_details> chip_locations(1,location);
-            dlib::array<image_type2> chips;
-            extract_image_chips(img, chip_locations, chips, interp);
-            swap(chips[0], chip);
         }
     }
 
@@ -2024,7 +1966,21 @@ namespace dlib
         image_type2& chip
     )
     {
-        extract_image_chip(img, location, chip, interpolate_bilinear());
+        // If the chip doesn't have any rotation or scaling then use the basic version of
+        // chip extraction that just does a fast copy.
+        if (location.angle == 0 && 
+            location.rows == location.rect.height() &&
+            location.cols == location.rect.width())
+        {
+            impl::basic_extract_image_chip(img, location.rect, chip);
+        }
+        else
+        {
+            std::vector<chip_details> chip_locations(1,location);
+            dlib::array<image_type2> chips;
+            extract_image_chips(img, chip_locations, chips);
+            swap(chips[0], chip);
+        }
     }
 
 // ----------------------------------------------------------------------------------------
@@ -2112,6 +2068,13 @@ namespace dlib
                 if (17 <= i && i <= 26)
                     continue;
 
+                if (1+i != 37 && 
+                    1+i != 40 &&
+                    1+i != 43 &&
+                    1+i != 46 &&
+                    1+i != 34)
+                    continue;
+
                 dpoint p;
                 p.x() = (padding+mean_face_shape_x[i-17])/(2*padding+1);
                 p.y() = (padding+mean_face_shape_y[i-17])/(2*padding+1);
@@ -2136,107 +2099,6 @@ namespace dlib
         for (unsigned long i = 0; i < dets.size(); ++i)
             res.push_back(get_face_chip_details(dets[i], size, padding));
         return res;
-    }
-
-// ----------------------------------------------------------------------------------------
-    
-
-    template <
-        typename image_type
-        >
-    void extract_image_4points (
-        const image_type& img_,
-        image_type& out_,
-        const std::array<dpoint,4>& pts
-    )
-    {
-        const_image_view<image_type> img(img_);
-        image_view<image_type> out(out_);
-        if (out.size() == 0)
-            return;
-
-        drectangle bounding_box;
-        for (auto& p : pts)
-            bounding_box += p;
-
-        const std::array<dpoint,4> corners = {{bounding_box.tl_corner(), bounding_box.tr_corner(),
-                                               bounding_box.bl_corner(), bounding_box.br_corner()}};
-
-        matrix<double> dists(4,4);
-        for (long r = 0; r < dists.nr(); ++r)
-        {
-            for (long c = 0; c < dists.nc(); ++c)
-            {
-                dists(r,c) = length_squared(corners[r] - pts[c]);
-            }
-        }
-
-        matrix<long long> idists = matrix_cast<long long>(-round(std::numeric_limits<long long>::max()*(dists/max(dists))));
-
-
-        const drectangle area = get_rect(out);
-        std::vector<dpoint> from_points = {area.tl_corner(), area.tr_corner(),
-                                           area.bl_corner(), area.br_corner()};
-
-        // find the assignment of corners to pts
-        auto assignment = max_cost_assignment(idists);
-        std::vector<dpoint> to_points(4);
-        for (size_t i = 0; i < assignment.size(); ++i)
-            to_points[i] = pts[assignment[i]];
-
-        auto tform = find_projective_transform(from_points, to_points);
-        transform_image(img_, out_, interpolate_bilinear(), tform);
-    }
-
-    template <
-        typename image_type
-        >
-    void extract_image_4points (
-        const image_type& img,
-        image_type& out,
-        const std::array<line,4>& lines 
-    )
-    {
-        extract_image_4points(img, out, find_convex_quadrilateral(lines));
-    }
-
-// ----------------------------------------------------------------------------------------
-
-    template <
-        typename image_type
-        >
-    image_type jitter_image(
-        const image_type& img,
-        dlib::rand& rnd
-    )
-    {
-        DLIB_CASSERT(num_rows(img)*num_columns(img) != 0);
-        DLIB_CASSERT(num_rows(img)==num_columns(img));
-
-        const double max_rotation_degrees = 3;
-        const double min_object_height = 0.97; 
-        const double max_object_height = 0.99999; 
-        const double translate_amount = 0.02;
-
-
-        const auto rect = shrink_rect(get_rect(img),3);
-
-        // perturb the location of the crop by a small fraction of the object's size.
-        const point rand_translate = dpoint(rnd.get_double_in_range(-translate_amount,translate_amount)*rect.width(), 
-            rnd.get_double_in_range(-translate_amount,translate_amount)*rect.height());
-
-        // perturb the scale of the crop by a fraction of the object's size
-        const double rand_scale_perturb = rnd.get_double_in_range(min_object_height, max_object_height); 
-
-        const long box_size = rect.height()/rand_scale_perturb;
-        const auto crop_rect = centered_rect(center(rect)+rand_translate, box_size, box_size);
-        const double angle = rnd.get_double_in_range(-max_rotation_degrees, max_rotation_degrees)*pi/180;
-        image_type crop;
-        extract_image_chip(img, chip_details(crop_rect, chip_dims(num_rows(img),num_columns(img)), angle), crop);
-        if (rnd.get_random_double() > 0.5)
-            flip_image_left_right(crop); 
-
-        return crop;
     }
 
 // ----------------------------------------------------------------------------------------

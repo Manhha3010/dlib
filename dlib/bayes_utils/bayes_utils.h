@@ -356,7 +356,7 @@ namespace dlib
             table.clear();
         }
 
-        size_t size () const { return table.size(); }
+        unsigned long size () const { return table.size(); }
         bool move_next() const { return table.move_next(); }
         void reset() const { table.reset(); }
         map_pair<assignment,double>& element() 

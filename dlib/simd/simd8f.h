@@ -125,8 +125,8 @@ namespace dlib
                 return _high[idx-4];
         }
 
-        inline const simd4f& low() const { return _low; }
-        inline const simd4f& high() const { return _high; }
+        inline simd4f low() const { return _low; }
+        inline simd4f high() const { return _high; }
 
     private:
         simd4f _low, _high;
@@ -141,8 +141,8 @@ namespace dlib
         inline simd8f_bool(const simd4f_bool& low_, const simd4f_bool& high_): _low(low_),_high(high_){}
 
 
-        inline const simd4f_bool& low() const { return _low; }
-        inline const simd4f_bool& high() const { return _high; }
+        inline simd4f_bool low() const { return _low; }
+        inline simd4f_bool high() const { return _high; }
     private:
         simd4f_bool _low,_high;
     };

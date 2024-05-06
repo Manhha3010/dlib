@@ -31,15 +31,5 @@ Detailed API Listing
    :members:
    :undoc-members:
 
-.. automodule:: dlib.cuda 
-   :members:
-   :undoc-members:
-
-.. automodule:: dlib.image_dataset_metadata
-   :members:
-   :undoc-members:
-
-
-
 
 

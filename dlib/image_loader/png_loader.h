@@ -9,7 +9,6 @@
 #include "image_loader.h"
 #include "../pixel.h"
 #include "../dir_nav.h"
-#include "../test_for_odr_violations.h"
 
 namespace dlib
 {

@@ -454,20 +454,6 @@ namespace dlib
 
 // ----------------------------------------------------------------------------------------
 
-    inline std::vector<rectangle> centered_rects (
-        const std::vector<point>& pts,
-        unsigned long width,
-        unsigned long height
-    );
-    /*!
-        ensures
-            - returns an array ARR where:
-                - #ARR.size() == pts.size()
-                - #ARR[i] == centered_rect(pts[i], width, height)
-    !*/
-
-// ----------------------------------------------------------------------------------------
-
     const rectangle centered_rect (
         long x,
         long y,
@@ -611,20 +597,6 @@ namespace dlib
 
 // ----------------------------------------------------------------------------------------
 
-    const rectangle scale_rect (
-        const rectangle& rect,
-        double scale
-    );
-    /*!
-        requires
-            - scale > 0
-        ensures
-            - return rectangle(rect.left() * scale, rect.top() * scale, rect.right() * scale, rect.bottom() * scale)
-              (i.e. resizes the given rectangle by multiplying all side coordinates with a scale factor)
-    !*/
-
-// ----------------------------------------------------------------------------------------
-
     const rectangle translate_rect (
         const rectangle& rect,
         const point& p
@@ -737,10 +709,9 @@ namespace dlib
 
 // ----------------------------------------------------------------------------------------
 
-    template <typename T>
-    inline const dlib::vector<T,2> nearest_point (
+    inline const point nearest_point (
         const rectangle& rect,
-        const dlib::vector<T,2>& p
+        const point& p
     );
     /*!
         ensures
@@ -779,11 +750,25 @@ namespace dlib
 
 // ----------------------------------------------------------------------------------------
 
-    template <typename T>
+    template <typename T, typename U>
+    double distance_to_line (
+        const std::pair<vector<T,2>,vector<T,2> >& line,
+        const vector<U,2>& p
+    );
+    /*!
+        ensures
+            - returns the euclidean distance between the given line and the point p.  That
+              is, given a line that passes though the points line.first and line.second,
+              what is the distance between p and the nearest point on the line?  This
+              function returns that distance.
+    !*/
+
+// ----------------------------------------------------------------------------------------
+
     void clip_line_to_rectangle (
         const rectangle& box,
-        dlib::vector<T,2>& p1,
-        dlib::vector<T,2>& p2
+        point& p1,
+        point& p2
     );
     /*!
         ensures

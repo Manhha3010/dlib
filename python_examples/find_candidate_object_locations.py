@@ -21,20 +21,28 @@
 #   Alternatively, if you want to compile dlib yourself then go into the dlib
 #   root folder and run:
 #       python setup.py install
+#   or
+#       python setup.py install --yes USE_AVX_INSTRUCTIONS
+#   if you have a CPU that supports AVX instructions, since this makes some
+#   things run faster.  
 #
 #   Compiling dlib should work on any operating system so long as you have
-#   CMake installed.  On Ubuntu, this can be done easily by running the
-#   command:
-#       sudo apt-get install cmake
+#   CMake and boost-python installed.  On Ubuntu, this can be done easily by
+#   running the command:
+#       sudo apt-get install libboost-python-dev cmake
 #
-#   Also note that this example requires Numpy which can be installed
+#   Also note that this example requires scikit-image which can be installed
 #   via the command:
-#       pip install numpy 
+#       pip install scikit-image
+#   Or downloaded from http://scikit-image.org/download.html. 
+
+
 
 import dlib
+from skimage import io
 
 image_file = '../examples/faces/2009_004587.jpg'
-img = dlib.load_rgb_image(image_file)
+img = io.imread(image_file)
 
 # Locations of candidate objects will be saved into rects
 rects = []

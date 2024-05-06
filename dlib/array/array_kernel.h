@@ -90,9 +90,6 @@ namespace dlib
             _at_start(true)
         {}
 
-        array(const array&) = delete;
-        array& operator=(array&) = delete; 
-
         array(
             array&& item
         ) : array()
@@ -109,7 +106,7 @@ namespace dlib
         }
 
         explicit array (
-            size_t new_size
+            unsigned long new_size
         ) :
             array_size(0),
             max_array_size(0),
@@ -128,22 +125,22 @@ namespace dlib
         );
 
         inline const T& operator[] (
-            size_t pos
+            unsigned long pos
         ) const;
 
         inline T& operator[] (
-            size_t pos
+            unsigned long pos
         );
 
         void set_size (
-            size_t size
+            unsigned long size
         );
 
-        inline size_t max_size(
+        inline unsigned long max_size(
         ) const;
 
         void set_max_size(
-            size_t max
+            unsigned long max
         );
 
         void swap (
@@ -151,7 +148,7 @@ namespace dlib
         );
 
         // functions from the enumerable interface
-        inline size_t size (
+        inline unsigned long size (
         ) const;
 
         inline bool at_start (
@@ -176,7 +173,7 @@ namespace dlib
         );
 
         void resize (
-            size_t new_size
+            unsigned long new_size
         );
 
         const T& back (
@@ -196,10 +193,6 @@ namespace dlib
             T& item
         );
 
-        void push_back (
-            T&& item
-        );
-
         typedef T* iterator;
         typedef const T* const_iterator;
         iterator                begin()                         { return array_elements; }
@@ -212,13 +205,17 @@ namespace dlib
         typename mem_manager::template rebind<T>::other pool;
 
         // data members
-        size_t array_size;
-        size_t max_array_size;
+        unsigned long array_size;
+        unsigned long max_array_size;
         T* array_elements;
 
         mutable T* pos;
         T* last_pos;
         mutable bool _at_start;
+
+        // restricted functions
+        array(array<T>&);        // copy constructor
+        array<T>& operator=(array<T>&);    // assignment operator        
 
     };
 
@@ -247,7 +244,7 @@ namespace dlib
             serialize(item.max_size(),out);
             serialize(item.size(),out);
 
-            for (size_t i = 0; i < item.size(); ++i)
+            for (unsigned long i = 0; i < item.size(); ++i)
                 serialize(item[i],out);
         }
         catch (serialization_error e)
@@ -267,12 +264,12 @@ namespace dlib
     {
         try
         {
-            size_t max_size, size;
+            unsigned long max_size, size;
             deserialize(max_size,in);
             deserialize(size,in);
             item.set_max_size(max_size);
             item.set_size(size);
-            for (size_t i = 0; i < size; ++i)
+            for (unsigned long i = 0; i < size; ++i)
                 deserialize(item[i],in);
         }
         catch (serialization_error e)
@@ -332,7 +329,7 @@ namespace dlib
         >
     const T& array<T,mem_manager>::
     operator[] (
-        size_t pos
+        unsigned long pos
     ) const
     {
         // make sure requires clause is not broken
@@ -355,7 +352,7 @@ namespace dlib
         >
     T& array<T,mem_manager>::
     operator[] (
-        size_t pos
+        unsigned long pos
     ) 
     {
         // make sure requires clause is not broken
@@ -378,7 +375,7 @@ namespace dlib
         >
     void array<T,mem_manager>::
     set_size (
-        size_t size
+        unsigned long size
     )
     {
         // make sure requires clause is not broken
@@ -404,7 +401,7 @@ namespace dlib
         typename T,
         typename mem_manager
         >
-    size_t array<T,mem_manager>::
+    unsigned long array<T,mem_manager>::
     size (
     ) const
     {
@@ -419,7 +416,7 @@ namespace dlib
         >
     void array<T,mem_manager>::
     set_max_size(
-        size_t max
+        unsigned long max
     )
     {
         reset();
@@ -457,7 +454,7 @@ namespace dlib
         typename T,
         typename mem_manager
         >
-    size_t array<T,mem_manager>::
+    unsigned long array<T,mem_manager>::
     max_size (
     ) const
     {
@@ -475,8 +472,8 @@ namespace dlib
         array<T,mem_manager>& item
     )
     {
-        auto             array_size_temp        = item.array_size;
-        auto             max_array_size_temp    = item.max_array_size;
+        unsigned long    array_size_temp        = item.array_size;
+        unsigned long    max_array_size_temp    = item.max_array_size;
         T*               array_elements_temp    = item.array_elements;
 
         item.array_size         = array_size;
@@ -645,7 +642,7 @@ namespace dlib
         >
     void array<T,mem_manager>::
     resize (
-        size_t new_size
+        unsigned long new_size
     )
     {
         if (this->max_size() < new_size)
@@ -653,7 +650,7 @@ namespace dlib
             array temp;
             temp.set_max_size(new_size);
             temp.set_size(new_size);
-            for (size_t i = 0; i < this->size(); ++i)
+            for (unsigned long i = 0; i < this->size(); ++i)
             {
                 exchange((*this)[i],temp[i]);
             }
@@ -768,7 +765,7 @@ namespace dlib
             array temp;
             temp.set_max_size(this->size()*2 + 1);
             temp.set_size(this->size()+1);
-            for (size_t i = 0; i < this->size(); ++i)
+            for (unsigned long i = 0; i < this->size(); ++i)
             {
                 exchange((*this)[i],temp[i]);
             }
@@ -781,17 +778,6 @@ namespace dlib
             exchange(item,(*this)[this->size()-1]);
         }
     }
-
-// ----------------------------------------------------------------------------------------
-
-    template <
-        typename T,
-        typename mem_manager
-        >
-    void array<T,mem_manager>::
-    push_back (
-        T&& item
-    ) { push_back(item); }
 
 // ----------------------------------------------------------------------------------------
 

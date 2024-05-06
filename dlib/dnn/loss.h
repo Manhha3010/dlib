@@ -6,13 +6,11 @@
 #include "loss_abstract.h"
 #include "core.h"
 #include "../matrix.h"
-#include "../cuda/tensor_tools.h"
+#include "tensor_tools.h"
 #include "../geometry.h"
 #include "../image_processing/box_overlap_testing.h"
 #include "../image_processing/full_object_detection.h"
-#include "../svm/ranking_tools.h"
 #include <sstream>
-#include <map>
 
 namespace dlib
 {
@@ -239,13 +237,6 @@ namespace dlib
 
     };
 
-    template <typename T>
-    T safe_log(T input, T epsilon = 1e-10)
-    {
-        // Prevent trying to calculate the logarithm of a very small number (let alone zero)
-        return std::log(std::max(input, epsilon));
-    }
-
     template <typename SUBNET>
     using loss_binary_log = add_loss_layer<loss_binary_log_, SUBNET>;
 
@@ -325,7 +316,7 @@ namespace dlib
                     const unsigned long idx = i*output_tensor.k()+k;
                     if (k == y)
                     {
-                        loss += scale*-safe_log(g[idx]);
+                        loss += scale*-std::log(g[idx]);
                         g[idx] = scale*(g[idx]-1);
                     }
                     else
@@ -367,295 +358,7 @@ namespace dlib
     using loss_multiclass_log = add_loss_layer<loss_multiclass_log_, SUBNET>;
 
 // ----------------------------------------------------------------------------------------
-
-    class loss_multimulticlass_log_ 
-    {
-
-    public:
-
-        loss_multimulticlass_log_ () = default;
-
-        loss_multimulticlass_log_ (
-            const std::map<std::string,std::vector<std::string>>& labels
-        )
-        {
-            for (auto& l : labels)
-            {
-                possible_labels[l.first] = std::make_shared<decltype(l.second)>(l.second);
-                DLIB_CASSERT(l.second.size() >= 2, "Each classifier must have at least two possible labels.");
-
-                for (size_t i = 0; i < l.second.size(); ++i)
-                {
-                    label_idx_lookup[l.first][l.second[i]] = i;
-                    ++total_num_labels;
-                }
-            }
-        }
-
-        unsigned long number_of_labels() const { return total_num_labels; }
-
-        unsigned long number_of_classifiers() const { return possible_labels.size(); }
-
-        std::map<std::string,std::vector<std::string>> get_labels ( 
-        ) const 
-        {
-            std::map<std::string,std::vector<std::string>> info; 
-            for (auto& i : possible_labels)
-            {
-                for (auto& label : *i.second)
-                    info[i.first].emplace_back(label);
-            }
-            return info;
-        }
-
-        class classifier_output
-        {
-
-        public:
-            classifier_output() = default;
-
-            size_t num_classes() const { return class_probs.size(); }
-
-            double probability_of_class (
-                size_t i
-            ) const 
-            { 
-                DLIB_CASSERT(i < num_classes());
-                return class_probs(i); 
-            }
-
-            const std::string& label(
-                size_t i
-            ) const 
-            { 
-                DLIB_CASSERT(i < num_classes()); 
-                return (*_labels)[i]; 
-            }
-
-            operator std::string(
-            ) const
-            {
-                DLIB_CASSERT(num_classes() != 0); 
-                return (*_labels)[index_of_max(class_probs)];
-            }
-
-            friend std::ostream& operator<< (std::ostream& out, const classifier_output& item)
-            {
-                DLIB_ASSERT(item.num_classes() != 0); 
-                out << static_cast<std::string>(item);
-                return out;
-            }
-
-        private:
-
-            friend class loss_multimulticlass_log_;
-
-            template <typename EXP>
-            classifier_output(
-                const matrix_exp<EXP>& class_probs,
-                const std::shared_ptr<std::vector<std::string>>& _labels
-            ) : 
-                class_probs(class_probs), 
-                _labels(_labels)
-            {
-            }
-
-            matrix<float,1,0> class_probs;
-            std::shared_ptr<std::vector<std::string>> _labels;
-        };
-
-        typedef std::map<std::string,std::string> training_label_type;
-        typedef std::map<std::string,classifier_output> output_label_type;
-
-
-        template <
-            typename SUB_TYPE,
-            typename label_iterator
-            >
-        void to_label (
-            const tensor& input_tensor,
-            const SUB_TYPE& sub,
-            label_iterator iter_begin
-        ) const
-        {
-            const tensor& output_tensor = sub.get_output();
-            DLIB_CASSERT(sub.sample_expansion_factor() == 1);
-            DLIB_CASSERT(output_tensor.nr() == 1 && 
-                         output_tensor.nc() == 1 );
-            DLIB_CASSERT(input_tensor.num_samples() == output_tensor.num_samples());
-
-            DLIB_CASSERT(number_of_labels() != 0, "You must give the loss_multimulticlass_log_'s constructor label data before you can use it!");
-            DLIB_CASSERT(output_tensor.k() == (long)number_of_labels(), "The output tensor must have " << number_of_labels() << " channels.");
-
-
-            long k_offset = 0;
-            for (auto& l : possible_labels)
-            {
-                auto iter = iter_begin;
-                const std::string& classifier_name = l.first;
-                const auto& labels = (*l.second); 
-                scratch.set_size(output_tensor.num_samples(), labels.size());
-                tt::copy_tensor(false, scratch, 0, output_tensor, k_offset, labels.size());
-
-                tt::softmax(scratch, scratch);
-
-                for (long i = 0; i < scratch.num_samples(); ++i)
-                    (*iter++)[classifier_name] = classifier_output(rowm(mat(scratch),i), l.second);
-
-                k_offset += labels.size();
-            }
-        }
-
-
-        template <
-            typename const_label_iterator,
-            typename SUBNET
-            >
-        double compute_loss_value_and_gradient (
-            const tensor& input_tensor,
-            const_label_iterator truth_begin, 
-            SUBNET& sub
-        ) const
-        {
-            const tensor& output_tensor = sub.get_output();
-            tensor& grad = sub.get_gradient_input();
-
-            DLIB_CASSERT(sub.sample_expansion_factor() == 1);
-            DLIB_CASSERT(input_tensor.num_samples() != 0);
-            DLIB_CASSERT(input_tensor.num_samples()%sub.sample_expansion_factor() == 0);
-            DLIB_CASSERT(input_tensor.num_samples() == grad.num_samples());
-            DLIB_CASSERT(input_tensor.num_samples() == output_tensor.num_samples());
-            DLIB_CASSERT(output_tensor.nr() == 1 && 
-                         output_tensor.nc() == 1);
-            DLIB_CASSERT(grad.nr() == 1 && 
-                         grad.nc() == 1);
-            DLIB_CASSERT(number_of_labels() != 0, "You must give the loss_multimulticlass_log_'s constructor label data before you can use it!");
-            DLIB_CASSERT(output_tensor.k() == (long)number_of_labels(), "The output tensor must have " << number_of_labels() << " channels.");
-
-            // The loss we output is the average loss over the mini-batch.
-            const double scale = 1.0/output_tensor.num_samples();
-            double loss = 0;
-            long k_offset = 0;
-            for (auto& l : label_idx_lookup)
-            {
-                const std::string& classifier_name = l.first;
-                const auto& int_labels = l.second; 
-                scratch.set_size(output_tensor.num_samples(), int_labels.size());
-                tt::copy_tensor(false, scratch, 0, output_tensor, k_offset, int_labels.size());
-
-                tt::softmax(scratch, scratch);
-
-
-                auto truth = truth_begin;
-                float* g = scratch.host();
-                for (long i = 0; i < scratch.num_samples(); ++i)
-                {
-                    const long y = int_labels.at(truth->at(classifier_name));
-                    ++truth;
-
-                    for (long k = 0; k < scratch.k(); ++k)
-                    {
-                        const unsigned long idx = i*scratch.k()+k;
-                        if (k == y)
-                        {
-                            loss += scale*-std::log(g[idx]);
-                            g[idx] = scale*(g[idx]-1);
-                        }
-                        else
-                        {
-                            g[idx] = scale*g[idx];
-                        }
-                    }
-                }
-
-                tt::copy_tensor(false, grad, k_offset, scratch, 0, int_labels.size());
-
-                k_offset += int_labels.size();
-            }
-            return loss;
-        }
-
-
-        friend void serialize(const loss_multimulticlass_log_& item, std::ostream& out)
-        {
-            serialize("loss_multimulticlass_log_", out);
-            serialize(item.get_labels(), out);
-        }
-
-        friend void deserialize(loss_multimulticlass_log_& item, std::istream& in)
-        {
-            std::string version;
-            deserialize(version, in);
-            if (version != "loss_multimulticlass_log_")
-                throw serialization_error("Unexpected version found while deserializing dlib::loss_multimulticlass_log_.");
-
-            std::map<std::string,std::vector<std::string>> info; 
-            deserialize(info, in);
-            item = loss_multimulticlass_log_(info);
-        }
-
-        friend std::ostream& operator<<(std::ostream& out, const loss_multimulticlass_log_& item)
-        {
-            out << "loss_multimulticlass_log, labels={";
-            for (auto i = item.possible_labels.begin(); i != item.possible_labels.end(); )
-            {
-                auto& category = i->first;
-                auto& labels = *(i->second);
-                out << category << ":(";
-                for (size_t j = 0; j < labels.size(); ++j)
-                {
-                    out << labels[j];
-                    if (j+1 < labels.size())
-                        out << ",";
-                }
-
-                out << ")";
-                if (++i != item.possible_labels.end())
-                    out << ", ";
-            }
-            out << "}";
-            return out;
-        }
-
-        friend void to_xml(const loss_multimulticlass_log_& item, std::ostream& out)
-        {
-            out << "<loss_multimulticlass_log>\n";
-            out << item;
-            out << "\n</loss_multimulticlass_log>";
-        }
-
-    private:
-
-        std::map<std::string,std::shared_ptr<std::vector<std::string>>> possible_labels;
-        unsigned long total_num_labels = 0;
-
-        // We make it true that: possible_labels[classifier][label_idx_lookup[classifier][label]] == label
-        std::map<std::string, std::map<std::string,long>> label_idx_lookup;
-
-
-        // Scratch doesn't logically contribute to the state of this object.  It's just
-        // temporary scratch space used by this class.  
-        mutable resizable_tensor scratch;
-
-
-    };
-
-    template <typename SUBNET>
-    using loss_multimulticlass_log = add_loss_layer<loss_multimulticlass_log_, SUBNET>;
-
-    inline bool operator== (const std::string& lhs, const loss_multimulticlass_log_::classifier_output& rhs)
-    { return lhs == static_cast<const std::string&>(rhs); }
-    inline bool operator== (const loss_multimulticlass_log_::classifier_output& lhs, const std::string& rhs)
-    { return rhs == static_cast<const std::string&>(lhs); }
-
 // ----------------------------------------------------------------------------------------
-// ----------------------------------------------------------------------------------------
-
-    enum class use_image_pyramid : uint8_t
-    {
-        no,
-        yes
-    };
 
     struct mmod_options
     {
@@ -702,10 +405,6 @@ namespace dlib
         double truth_match_iou_threshold = 0.5;
         test_box_overlap overlaps_nms = test_box_overlap(0.4);
         test_box_overlap overlaps_ignore;
-        bool use_bounding_box_regression = false; 
-        double bbr_lambda = 100; 
-
-        use_image_pyramid assume_image_pyramid = use_image_pyramid::yes;
 
         mmod_options (
             const std::vector<std::vector<mmod_rect>>& boxes,
@@ -730,8 +429,8 @@ namespace dlib
                         detector_width = ratio*target_size;
                         if (detector_width < min_target_size)
                         {
-                            detector_height = min_target_size/ratio;
-                            detector_width = min_target_size;
+                            detector_height = min_target_size;
+                            detector_width = min_target_size/ratio;
                         }
                     }
                     else
@@ -752,37 +451,8 @@ namespace dlib
 
             DLIB_CASSERT(detector_windows.size() != 0, "You can't call mmod_options's constructor with a set of boxes that is empty (or only contains ignored boxes).");
 
-            set_overlap_nms(boxes);
-        }
 
-        mmod_options(
-            use_image_pyramid assume_image_pyramid,
-            const std::vector<std::vector<mmod_rect>>& boxes,
-            const double min_detector_window_overlap_iou = 0.75
-        )
-            : assume_image_pyramid(assume_image_pyramid)
-        {
-            DLIB_CASSERT(assume_image_pyramid == use_image_pyramid::no);
-            DLIB_CASSERT(0.5 < min_detector_window_overlap_iou && min_detector_window_overlap_iou < 1);
 
-            // Figure out what detector windows we will need.
-            for (auto& label : get_labels(boxes))
-            {
-                for (auto rectangle : find_covering_rectangles(boxes, test_box_overlap(min_detector_window_overlap_iou), label))
-                {
-                    detector_windows.push_back(detector_window_details(rectangle.width(), rectangle.height(), label));
-                }
-            }
-
-            DLIB_CASSERT(detector_windows.size() != 0, "You can't call mmod_options's constructor with a set of boxes that is empty (or only contains ignored boxes).");
-
-            set_overlap_nms(boxes);
-        }
-
-    private:
-
-        void set_overlap_nms(const std::vector<std::vector<mmod_rect>>& boxes)
-        {
             // Convert from mmod_rect to rectangle so we can call
             // find_tight_overlap_tester().
             std::vector<std::vector<rectangle>> temp;
@@ -808,6 +478,9 @@ namespace dlib
             auto percent_covered_thresh = advance_toward_1(overlaps_nms.get_percent_covered_thresh());
             overlaps_nms = test_box_overlap(iou_thresh, percent_covered_thresh);
         }
+
+
+    private:
 
         static double advance_toward_1 (
             double val
@@ -915,31 +588,11 @@ namespace dlib
             return ratios;
         }
 
-        static std::vector<dlib::rectangle> find_covering_rectangles (
-            const std::vector<std::vector<mmod_rect>>& rects,
-            const test_box_overlap& overlaps,
-            const std::string& label
-        )
-        {
-            std::vector<rectangle> boxes;
-            // Make sure all the boxes have the same position, so that the we only check for
-            // width and height.
-            for (auto& bb : rects)
-            {
-                for (auto&& b : bb)
-                {
-                    if (!b.ignore && b.label == label)
-                        boxes.push_back(rectangle(b.rect.width(), b.rect.height()));
-                }
-            }
-
-            return find_rectangles_overlapping_all_others(boxes, overlaps);
-        }
     };
 
     inline void serialize(const mmod_options& item, std::ostream& out)
     {
-        int version = 4;
+        int version = 2;
 
         serialize(version, out);
         serialize(item.detector_windows, out);
@@ -948,16 +601,13 @@ namespace dlib
         serialize(item.truth_match_iou_threshold, out);
         serialize(item.overlaps_nms, out);
         serialize(item.overlaps_ignore, out);
-        serialize(static_cast<uint8_t>(item.assume_image_pyramid), out);
-        serialize(item.use_bounding_box_regression, out);
-        serialize(item.bbr_lambda, out);
     }
 
     inline void deserialize(mmod_options& item, std::istream& in)
     {
         int version = 0;
         deserialize(version, in);
-        if (!(1 <= version && version <= 4))
+        if (version != 2 && version != 1)
             throw serialization_error("Unexpected version found while deserializing dlib::mmod_options");
         if (version == 1)
         {
@@ -976,20 +626,6 @@ namespace dlib
         deserialize(item.truth_match_iou_threshold, in);
         deserialize(item.overlaps_nms, in);
         deserialize(item.overlaps_ignore, in);
-        item.assume_image_pyramid = use_image_pyramid::yes;
-        if (version >= 3)
-        {
-            uint8_t assume_image_pyramid = 0;
-            deserialize(assume_image_pyramid, in);
-            item.assume_image_pyramid = static_cast<use_image_pyramid>(assume_image_pyramid);
-        }
-        item.use_bounding_box_regression = mmod_options().use_bounding_box_regression; // use default value since this wasn't provided
-        item.bbr_lambda = mmod_options().bbr_lambda; // use default value since this wasn't provided
-        if (version >= 4)
-        {
-            deserialize(item.use_bounding_box_regression, in);
-            deserialize(item.bbr_lambda, in);
-        }
     }
 
 // ----------------------------------------------------------------------------------------
@@ -1002,30 +638,19 @@ namespace dlib
 
             intermediate_detection(
                 rectangle rect_
-            ) : rect(rect_), rect_bbr(rect_) {}
+            ) : rect(rect_) {}
 
             intermediate_detection(
                 rectangle rect_,
                 double detection_confidence_,
                 size_t tensor_offset_,
                 long channel
-            ) : rect(rect_), detection_confidence(detection_confidence_), tensor_offset(tensor_offset_), tensor_channel(channel), rect_bbr(rect_) {}
+            ) : rect(rect_), detection_confidence(detection_confidence_), tensor_offset(tensor_offset_), tensor_channel(channel) {}
 
-            // rect is the rectangle you get without any bounding box regression.  So it's
-            // the basic sliding window box (aka, the "anchor box").
             rectangle rect;
             double detection_confidence = 0;
             size_t tensor_offset = 0;
             long tensor_channel = 0;
-
-            // rect_bbr = rect + bounding box regression.  So more accurate.  Or if bbr is off then
-            // this is just rect.  The important thing about rect_bbr is that its the
-            // rectangle we use for doing NMS.
-            drectangle rect_bbr; 
-            size_t tensor_offset_dx = 0;
-            size_t tensor_offset_dy = 0;
-            size_t tensor_offset_dw = 0;
-            size_t tensor_offset_dh = 0;
 
             bool operator<(const intermediate_detection& item) const { return detection_confidence < item.detection_confidence; }
         };
@@ -1054,14 +679,7 @@ namespace dlib
         ) const
         {
             const tensor& output_tensor = sub.get_output();
-            if (options.use_bounding_box_regression)
-            {
-                DLIB_CASSERT(output_tensor.k() == (long)options.detector_windows.size()*5);
-            }
-            else
-            {
-                DLIB_CASSERT(output_tensor.k() == (long)options.detector_windows.size());
-            }
+            DLIB_CASSERT(output_tensor.k() == (long)options.detector_windows.size());
             DLIB_CASSERT(input_tensor.num_samples() == output_tensor.num_samples());
             DLIB_CASSERT(sub.sample_expansion_factor() == 1,  sub.sample_expansion_factor());
 
@@ -1075,10 +693,10 @@ namespace dlib
                 final_dets.clear();
                 for (unsigned long i = 0; i < dets_accum.size(); ++i)
                 {
-                    if (overlaps_any_box_nms(final_dets, dets_accum[i].rect_bbr))
+                    if (overlaps_any_box_nms(final_dets, dets_accum[i].rect))
                         continue;
 
-                    final_dets.push_back(mmod_rect(dets_accum[i].rect_bbr,
+                    final_dets.push_back(mmod_rect(dets_accum[i].rect,
                                                    dets_accum[i].detection_confidence,
                                                    options.detector_windows[dets_accum[i].tensor_channel].label));
                 }
@@ -1104,19 +722,12 @@ namespace dlib
             DLIB_CASSERT(sub.sample_expansion_factor() == 1);
             DLIB_CASSERT(input_tensor.num_samples() == grad.num_samples());
             DLIB_CASSERT(input_tensor.num_samples() == output_tensor.num_samples());
-            if (options.use_bounding_box_regression)
-            {
-                DLIB_CASSERT(output_tensor.k() == (long)options.detector_windows.size()*5);
-            }
-            else
-            {
-                DLIB_CASSERT(output_tensor.k() == (long)options.detector_windows.size());
-            }
+            DLIB_CASSERT(output_tensor.k() == (long)options.detector_windows.size());
 
-            double det_thresh_speed_adjust = 0;
+
 
             // we will scale the loss so that it doesn't get really huge
-            const double scale = 1.0/(output_tensor.nr()*output_tensor.nc()*output_tensor.num_samples()*options.detector_windows.size());
+            const double scale = 1.0/output_tensor.size();
             double loss = 0;
 
             float* g = grad.host_write_only();
@@ -1129,17 +740,9 @@ namespace dlib
             std::vector<intermediate_detection> dets;
             for (long i = 0; i < output_tensor.num_samples(); ++i)
             {
-                tensor_to_dets(input_tensor, output_tensor, i, dets, -options.loss_per_false_alarm + det_thresh_speed_adjust, sub);
+                tensor_to_dets(input_tensor, output_tensor, i, dets, -options.loss_per_false_alarm, sub);
 
                 const unsigned long max_num_dets = 50 + truth->size()*5;
-                // Prevent calls to tensor_to_dets() from running for a really long time
-                // due to the production of an obscene number of detections.
-                const unsigned long max_num_initial_dets = max_num_dets*100;
-                if (dets.size() >= max_num_initial_dets)
-                {
-                    det_thresh_speed_adjust = std::max(det_thresh_speed_adjust,dets[max_num_initial_dets].detection_confidence + options.loss_per_false_alarm);
-                }
-
 
                 // The loss will measure the number of incorrect detections.  A detection is
                 // incorrect if it doesn't hit a truth rectangle or if it is a duplicate detection
@@ -1151,7 +754,7 @@ namespace dlib
                     {
                         size_t k;
                         point p;
-                        if(image_rect_to_feat_coord(p, input_tensor, x, x.label, sub, k, options.assume_image_pyramid))
+                        if(image_rect_to_feat_coord(p, input_tensor, x, x.label, sub, k))
                         {
                             // Ignore boxes that can't be detected by the CNN.
                             loss -= options.loss_per_missed_target;
@@ -1227,7 +830,7 @@ namespace dlib
                             // We are ignoring this box so we shouldn't have counted it in the
                             // loss in the first place.  So we subtract out the loss values we
                             // added for it in the code above.
-                            loss -= options.loss_per_missed_target-out_data[idx];
+                            loss -= 1-out_data[idx];
                             g[idx] = 0;
                             std::cout << "Warning, ignoring object.  We encountered a truth rectangle located at " << (*truth)[i].rect;
                             std::cout << " that is suppressed by non-max-suppression ";
@@ -1265,59 +868,6 @@ namespace dlib
                                 hit_truth_table[hittruth.second] = true;
                                 final_dets.push_back(dets[i]);
                                 loss -= options.loss_per_missed_target;
-
-                                // Now account for BBR loss and gradient if appropriate.
-                                if (options.use_bounding_box_regression)
-                                {
-                                    double dx = out_data[dets[i].tensor_offset_dx];
-                                    double dy = out_data[dets[i].tensor_offset_dy];
-                                    double dw = out_data[dets[i].tensor_offset_dw];
-                                    double dh = out_data[dets[i].tensor_offset_dh];
-
-                                    dpoint p = dcenter(dets[i].rect_bbr); 
-                                    double w = dets[i].rect_bbr.width()-1;
-                                    double h = dets[i].rect_bbr.height()-1;
-                                    drectangle truth_box = (*truth)[hittruth.second].rect;
-                                    dpoint p_truth = dcenter(truth_box); 
-
-                                    DLIB_CASSERT(w > 0);
-                                    DLIB_CASSERT(h > 0);
-
-                                    double target_dx = (p_truth.x() - p.x())/w;
-                                    double target_dy = (p_truth.y() - p.y())/h;
-                                    double target_dw = std::log((truth_box.width()-1)/w);
-                                    double target_dh = std::log((truth_box.height()-1)/h);
-
-
-                                    // compute smoothed L1 loss on BBR outputs.  This loss
-                                    // is just the MSE loss when the loss is small and L1
-                                    // when large.
-                                    dx = dx-target_dx;
-                                    dy = dy-target_dy;
-                                    dw = dw-target_dw;
-                                    dh = dh-target_dh;
-
-                                    // use smoothed L1 
-                                    double ldx = std::abs(dx)<1 ? 0.5*dx*dx : std::abs(dx)-0.5;
-                                    double ldy = std::abs(dy)<1 ? 0.5*dy*dy : std::abs(dy)-0.5;
-                                    double ldw = std::abs(dw)<1 ? 0.5*dw*dw : std::abs(dw)-0.5;
-                                    double ldh = std::abs(dh)<1 ? 0.5*dh*dh : std::abs(dh)-0.5;
-
-                                    loss += options.bbr_lambda*(ldx + ldy + ldw + ldh);
-      
-                                    // now compute the derivatives of the smoothed L1 loss
-                                    ldx = put_in_range(-1,1, dx);
-                                    ldy = put_in_range(-1,1, dy);
-                                    ldw = put_in_range(-1,1, dw);
-                                    ldh = put_in_range(-1,1, dh);
-
-
-                                    // also smoothed L1 gradient goes to gradient output
-                                    g[dets[i].tensor_offset_dx] += scale*options.bbr_lambda*ldx;
-                                    g[dets[i].tensor_offset_dy] += scale*options.bbr_lambda*ldy;
-                                    g[dets[i].tensor_offset_dw] += scale*options.bbr_lambda*ldw;
-                                    g[dets[i].tensor_offset_dh] += scale*options.bbr_lambda*ldh;
-                                }
                             }
                             else
                             {
@@ -1387,9 +937,6 @@ namespace dlib
             out << ", loss per FA:" << opts.loss_per_false_alarm;
             out << ", loss per miss:" << opts.loss_per_missed_target;
             out << ", truth match IOU thresh:" << opts.truth_match_iou_threshold;
-            out << ", use_bounding_box_regression:" << opts.use_bounding_box_regression;
-            if (opts.use_bounding_box_regression)
-                out << ", bbr_lambda:" << opts.bbr_lambda;
             out << ", overlaps_nms:("<<opts.overlaps_nms.get_iou_thresh()<<","<<opts.overlaps_nms.get_percent_covered_thresh()<<")";
             out << ", overlaps_ignore:("<<opts.overlaps_ignore.get_iou_thresh()<<","<<opts.overlaps_ignore.get_percent_covered_thresh()<<")";
 
@@ -1416,19 +963,11 @@ namespace dlib
         ) const
         {
             DLIB_CASSERT(net.sample_expansion_factor() == 1,net.sample_expansion_factor());
-            if (options.use_bounding_box_regression)
-            {
-                DLIB_CASSERT(output_tensor.k() == (long)options.detector_windows.size()*5);
-            }
-            else
-            {
-                DLIB_CASSERT(output_tensor.k() == (long)options.detector_windows.size());
-            }
-
+            DLIB_CASSERT(output_tensor.k() == (long)options.detector_windows.size());
             const float* out_data = output_tensor.host() + output_tensor.k()*output_tensor.nr()*output_tensor.nc()*i;
             // scan the final layer and output the positive scoring locations
             dets_accum.clear();
-            for (long k = 0; k < (long)options.detector_windows.size(); ++k)
+            for (long k = 0; k < output_tensor.k(); ++k)
             {
                 for (long r = 0; r < output_tensor.nr(); ++r)
                 {
@@ -1442,28 +981,6 @@ namespace dlib
                             rect = input_layer(net).tensor_space_to_image_space(input_tensor,rect);
 
                             dets_accum.push_back(intermediate_detection(rect, score, (k*output_tensor.nr() + r)*output_tensor.nc() + c, k));
-
-                            if (options.use_bounding_box_regression)
-                            {
-                                const auto offset = options.detector_windows.size() + k*4;
-                                dets_accum.back().tensor_offset_dx = ((offset+0)*output_tensor.nr() + r)*output_tensor.nc() + c;
-                                dets_accum.back().tensor_offset_dy = ((offset+1)*output_tensor.nr() + r)*output_tensor.nc() + c;
-                                dets_accum.back().tensor_offset_dw = ((offset+2)*output_tensor.nr() + r)*output_tensor.nc() + c;
-                                dets_accum.back().tensor_offset_dh = ((offset+3)*output_tensor.nr() + r)*output_tensor.nc() + c;
-
-                                // apply BBR to dets_accum.back()
-                                double dx = out_data[dets_accum.back().tensor_offset_dx];
-                                double dy = out_data[dets_accum.back().tensor_offset_dy];
-                                double dw = out_data[dets_accum.back().tensor_offset_dw];
-                                double dh = out_data[dets_accum.back().tensor_offset_dh];
-                                dw = std::exp(dw);
-                                dh = std::exp(dh);
-                                double w = rect.width()-1;
-                                double h = rect.height()-1;
-                                rect = translate_rect(rect, dpoint(dx*w,dy*h));
-                                rect = centered_drect(rect, w*dw+1, h*dh+1);
-                                dets_accum.back().rect_bbr = rect;
-                            }
                         }
                     }
                 }
@@ -1473,39 +990,21 @@ namespace dlib
 
         size_t find_best_detection_window (
             rectangle rect,
-            const std::string& label,
-            use_image_pyramid assume_image_pyramid
+            const std::string& label
         ) const
         {
-            if (assume_image_pyramid == use_image_pyramid::yes)
-            {
-                rect = move_rect(set_rect_area(rect, 400*400), point(0,0));
-            }
-            else
-            {
-                rect = rectangle(rect.width(), rect.height());
-            }
+            rect = move_rect(set_rect_area(rect, 400*400), point(0,0));
 
-            // Figure out which detection window in options.detector_windows is most similar to rect
-            // (in terms of aspect ratio, if assume_image_pyramid == use_image_pyramid::yes).
+            // Figure out which detection window in options.detector_windows has the most
+            // similar aspect ratio to rect.
             size_t best_i = 0;
             double best_ratio_diff = -std::numeric_limits<double>::infinity();
             for (size_t i = 0; i < options.detector_windows.size(); ++i)
             {
                 if (options.detector_windows[i].label != label)
                     continue;
-
-                rectangle det_window;
-                
-                if (options.assume_image_pyramid == use_image_pyramid::yes)
-                {
-                    det_window = centered_rect(point(0,0), options.detector_windows[i].width, options.detector_windows[i].height);
-                    det_window = move_rect(set_rect_area(det_window, 400*400), point(0,0));
-                }
-                else
-                {
-                    det_window = rectangle(options.detector_windows[i].width, options.detector_windows[i].height);
-                }
+                rectangle det_window = centered_rect(point(0,0), options.detector_windows[i].width, options.detector_windows[i].height);
+                det_window = move_rect(set_rect_area(det_window, 400*400), point(0,0));
 
                 double iou = box_intersection_over_union(rect, det_window);
                 if (iou > best_ratio_diff)
@@ -1524,8 +1023,7 @@ namespace dlib
             const rectangle& rect,
             const std::string& label,
             const net_type& net,
-            size_t& det_idx,
-            use_image_pyramid assume_image_pyramid
+            size_t& det_idx
         ) const 
         {
             using namespace std;
@@ -1537,24 +1035,14 @@ namespace dlib
                 throw impossible_labeling_error(sout.str());
             }
 
-            det_idx = find_best_detection_window(rect,label,assume_image_pyramid);
+            det_idx = find_best_detection_window(rect,label); 
 
-            double scale = 1.0;
-            if (options.assume_image_pyramid == use_image_pyramid::yes)
-            {
-                // Compute the scale we need to be at to get from rect to our detection window.
-                // Note that we compute the scale as the max of two numbers.  It doesn't
-                // actually matter which one we pick, because if they are very different then
-                // it means the box can't be matched by the sliding window.  But picking the
-                // max causes the right error message to be selected in the logic below.
-                scale = std::max(options.detector_windows[det_idx].width/(double)rect.width(), options.detector_windows[det_idx].height/(double)rect.height());
-            }
-            else
-            {
-                // We don't want invariance to scale.
-                scale = 1.0;
-            }
-
+            // Compute the scale we need to be at to get from rect to our detection window.
+            // Note that we compute the scale as the max of two numbers.  It doesn't
+            // actually matter which one we pick, because if they are very different then
+            // it means the box can't be matched by the sliding window.  But picking the
+            // max causes the right error message to be selected in the logic below.
+            const double scale = std::max(options.detector_windows[det_idx].width/(double)rect.width(), options.detector_windows[det_idx].height/(double)rect.height());
             const rectangle mapped_rect = input_layer(net).image_space_to_tensor_space(input_tensor, std::min(1.0,scale), rect);
 
             // compute the detection window that we would use at this position.
@@ -1576,8 +1064,7 @@ namespace dlib
                 }
                 else
                 {
-                    std::cout << "This is either because (1) the final layer's features have too large of a stride across the image, limiting the possible locations the sliding window can search ";
-                    std::cout << "or (2) because the rectangle's aspect ratio is too different from the best matching detection window, ";
+                    std::cout << "This is because the rectangle's aspect ratio is too different from the best matching detection window, ";
                     std::cout << "which has a width and height of " << options.detector_windows[det_idx].width << " and " << options.detector_windows[det_idx].height << "." << std::endl;
                 }
                 return true;
@@ -1933,147 +1420,6 @@ namespace dlib
 
 // ----------------------------------------------------------------------------------------
 
-    class loss_ranking_
-    {
-    public:
-
-        typedef float training_label_type; // nominally +1/-1
-        typedef float output_label_type; // ranking score
-
-        template <
-            typename SUB_TYPE,
-            typename label_iterator
-            >
-        void to_label (
-            const tensor& input_tensor,
-            const SUB_TYPE& sub,
-            label_iterator iter
-        ) const
-        {
-            DLIB_CASSERT(sub.sample_expansion_factor() == 1);
-
-            const tensor& output_tensor = sub.get_output();
-
-            DLIB_CASSERT(output_tensor.nr() == 1 &&
-                         output_tensor.nc() == 1 &&
-                         output_tensor.k() == 1);
-            DLIB_CASSERT(input_tensor.num_samples() == output_tensor.num_samples());
-
-            const float* out_data = output_tensor.host();
-            for (long i = 0; i < output_tensor.num_samples(); ++i)
-            {
-                *iter++ = out_data[i];
-            }
-        }
-
-
-        template <
-            typename const_label_iterator,
-            typename SUBNET
-            >
-        double compute_loss_value_and_gradient (
-            const tensor& input_tensor,
-            const_label_iterator truth,
-            SUBNET& sub
-        ) const
-        {
-            const tensor& output_tensor = sub.get_output();
-            tensor& grad = sub.get_gradient_input();
-
-            DLIB_CASSERT(sub.sample_expansion_factor() == 1);
-            DLIB_CASSERT(input_tensor.num_samples() != 0);
-            DLIB_CASSERT(input_tensor.num_samples()%sub.sample_expansion_factor() == 0);
-            DLIB_CASSERT(input_tensor.num_samples() == grad.num_samples());
-            DLIB_CASSERT(input_tensor.num_samples() == output_tensor.num_samples());
-            DLIB_CASSERT(output_tensor.nr() == 1 &&
-                         output_tensor.nc() == 1 &&
-                         output_tensor.k() == 1);
-            DLIB_CASSERT(grad.nr() == 1 &&
-                         grad.nc() == 1 &&
-                         grad.k() == 1);
-
-
-            std::vector<double> rel_scores;
-            std::vector<double> nonrel_scores;
-            std::vector<long> rel_idx, nonrel_idx;
-
-            const float* out_data = output_tensor.host();
-            float* g = grad.host_write_only();
-            for (long i = 0; i < output_tensor.num_samples(); ++i)
-            {
-                const float y = *truth++;
-                if (y > 0)
-                {
-                    rel_scores.push_back(out_data[i]-y);
-                    rel_idx.push_back(i);
-                }
-                else if (y < 0)
-                {
-                    nonrel_scores.push_back(out_data[i]-y);
-                    nonrel_idx.push_back(i);
-                }
-                else
-                {
-                    g[i] = 0;
-                }
-            }
-
-
-            std::vector<unsigned long> rel_counts;
-            std::vector<unsigned long> nonrel_counts;
-            count_ranking_inversions(rel_scores, nonrel_scores, rel_counts, nonrel_counts);
-            const unsigned long total_pairs = rel_scores.size()*nonrel_scores.size();
-            DLIB_CASSERT(total_pairs > 0, "You can't give a ranking mini-batch that contains only one class.  Both classes must be represented.");
-            const double scale = 1.0/total_pairs;
-
-
-            double loss = 0;
-            for (unsigned long k = 0; k < rel_counts.size(); ++k)
-            {
-                loss -= rel_counts[k]*rel_scores[k];
-                g[rel_idx[k]] = -1.0*rel_counts[k]*scale;
-            }
-
-            for (unsigned long k = 0; k < nonrel_counts.size(); ++k)
-            {
-                loss += nonrel_counts[k]*nonrel_scores[k];
-                g[nonrel_idx[k]] = nonrel_counts[k]*scale;
-            }
-
-            return loss*scale;
-        }
-
-        friend void serialize(const loss_ranking_& , std::ostream& out)
-        {
-            serialize("loss_ranking_", out);
-        }
-
-        friend void deserialize(loss_ranking_& , std::istream& in)
-        {
-            std::string version;
-            deserialize(version, in);
-            if (version != "loss_ranking_")
-                throw serialization_error("Unexpected version found while deserializing dlib::loss_ranking_.");
-        }
-
-        friend std::ostream& operator<<(std::ostream& out, const loss_ranking_& )
-        {
-            out << "loss_ranking";
-            return out;
-        }
-
-        friend void to_xml(const loss_ranking_& /*item*/, std::ostream& out)
-        {
-            out << "<loss_ranking/>";
-        }
-
-    };
-
-    template <typename SUBNET>
-    using loss_ranking = add_loss_layer<loss_ranking_, SUBNET>;
-
-// ----------------------------------------------------------------------------------------
-
     class loss_mean_squared_
     {
     public:
@@ -2143,7 +1489,7 @@ namespace dlib
                 const float y = *truth++;
                 const float temp1 = y - out_data[i];
                 const float temp2 = scale*temp1;
-                loss += temp2*temp1;
+                loss += 0.5*temp2*temp1;
                 g[i] = -temp2;
 
             }
@@ -2178,137 +1524,6 @@ namespace dlib
 
     template <typename SUBNET>
     using loss_mean_squared = add_loss_layer<loss_mean_squared_, SUBNET>;
-
-// ----------------------------------------------------------------------------------------
-
-    class loss_epsilon_insensitive_
-    {
-    public:
-
-        typedef float training_label_type;
-        typedef float output_label_type;
-
-        loss_epsilon_insensitive_() = default;
-        loss_epsilon_insensitive_(double eps) : eps(eps) 
-        {
-            DLIB_CASSERT(eps >= 0, "You can't set a negative error epsilon.");
-        }
-
-        double get_epsilon () const { return eps; }
-        void set_epsilon(double e)
-        {
-            DLIB_CASSERT(e >= 0, "You can't set a negative error epsilon.");
-            eps = e;
-        }
-
-        template <
-            typename SUB_TYPE,
-            typename label_iterator
-            >
-        void to_label (
-            const tensor& input_tensor,
-            const SUB_TYPE& sub,
-            label_iterator iter
-        ) const
-        {
-            DLIB_CASSERT(sub.sample_expansion_factor() == 1);
-
-            const tensor& output_tensor = sub.get_output();
-
-            DLIB_CASSERT(output_tensor.nr() == 1 &&
-                         output_tensor.nc() == 1 &&
-                         output_tensor.k() == 1);
-            DLIB_CASSERT(input_tensor.num_samples() == output_tensor.num_samples());
-
-            const float* out_data = output_tensor.host();
-            for (long i = 0; i < output_tensor.num_samples(); ++i)
-            {
-                *iter++ = out_data[i];
-            }
-        }
-
-
-        template <
-            typename const_label_iterator,
-            typename SUBNET
-            >
-        double compute_loss_value_and_gradient (
-            const tensor& input_tensor,
-            const_label_iterator truth,
-            SUBNET& sub
-        ) const
-        {
-            const tensor& output_tensor = sub.get_output();
-            tensor& grad = sub.get_gradient_input();
-
-            DLIB_CASSERT(sub.sample_expansion_factor() == 1);
-            DLIB_CASSERT(input_tensor.num_samples() != 0);
-            DLIB_CASSERT(input_tensor.num_samples()%sub.sample_expansion_factor() == 0);
-            DLIB_CASSERT(input_tensor.num_samples() == grad.num_samples());
-            DLIB_CASSERT(input_tensor.num_samples() == output_tensor.num_samples());
-            DLIB_CASSERT(output_tensor.nr() == 1 &&
-                         output_tensor.nc() == 1 &&
-                         output_tensor.k() == 1);
-            DLIB_CASSERT(grad.nr() == 1 &&
-                         grad.nc() == 1 &&
-                         grad.k() == 1);
-
-            // The loss we output is the average loss over the mini-batch.
-            const double scale = 1.0/output_tensor.num_samples();
-            double loss = 0;
-            float* g = grad.host_write_only();
-            const float* out_data = output_tensor.host();
-            for (long i = 0; i < output_tensor.num_samples(); ++i)
-            {
-                const float y = *truth++;
-                const float err = out_data[i]-y;
-                if (err > eps)
-                {
-                    loss += scale*(err-eps);
-                    g[i] = scale;
-                }
-                else if (err < -eps)
-                {
-                    loss += scale*(eps-err);
-                    g[i] = -scale;
-                }
-            }
-            return loss;
-        }
-
-        friend void serialize(const loss_epsilon_insensitive_& item, std::ostream& out)
-        {
-            serialize("loss_epsilon_insensitive_", out);
-            serialize(item.eps, out);
-        }
-
-        friend void deserialize(loss_epsilon_insensitive_& item, std::istream& in)
-        {
-            std::string version;
-            deserialize(version, in);
-            if (version != "loss_epsilon_insensitive_")
-                throw serialization_error("Unexpected version found while deserializing dlib::loss_epsilon_insensitive_.");
-            deserialize(item.eps, in);
-        }
-
-        friend std::ostream& operator<<(std::ostream& out, const loss_epsilon_insensitive_& item)
-        {
-            out << "loss_epsilon_insensitive epsilon: " << item.eps;
-            return out;
-        }
-
-        friend void to_xml(const loss_epsilon_insensitive_& item, std::ostream& out)
-        {
-            out << "<loss_epsilon_insensitive_ epsilon='" << item.eps << "'/>";
-        }
-
-    private:
-        double eps = 1;
-
-    };
-
-    template <typename SUBNET>
-    using loss_epsilon_insensitive = add_loss_layer<loss_epsilon_insensitive_, SUBNET>;
 
 // ----------------------------------------------------------------------------------------
 
@@ -2391,7 +1606,7 @@ namespace dlib
                     const float y = ytrue(j, 0);
                     const float temp1 = y - *out_data++;
                     const float temp2 = scale*temp1;
-                    loss += temp2*temp1;
+                    loss += 0.5*temp2*temp1;
                     *g = -temp2;
                     ++g;
                 }
@@ -2528,13 +1743,6 @@ namespace dlib
                              "output size = " << output_tensor.nr() << " x " << output_tensor.nc());
             }
 
-
-#ifdef DLIB_USE_CUDA
-            double loss;
-            cuda_compute(truth, output_tensor, grad, loss);
-            return loss;
-#else
-
             tt::softmax(grad, output_tensor);
 
             // The loss we output is the average loss over the mini-batch, and also over each element of the matrix output.
@@ -2557,7 +1765,7 @@ namespace dlib
                             const size_t idx = tensor_index(output_tensor, i, k, r, c);
                             if (k == y)
                             {
-                                loss += scale*-safe_log(g[idx]);
+                                loss += scale*-std::log(g[idx]);
                                 g[idx] = scale*(g[idx] - 1);
                             }
                             else if (y == label_to_ignore)
@@ -2573,7 +1781,6 @@ namespace dlib
                 }
             }
             return loss;
-#endif
         }
 
         friend void serialize(const loss_multiclass_log_per_pixel_& , std::ostream& out)
@@ -2607,10 +1814,6 @@ namespace dlib
             return ((sample * t.k() + k) * t.nr() + row) * t.nc() + column;
         }
 
-
-#ifdef DLIB_USE_CUDA
-        cuda::compute_loss_multiclass_log_per_pixel cuda_compute;
-#endif
     };
 
     template <typename SUBNET>
@@ -2708,7 +1911,7 @@ namespace dlib
                             const size_t idx = tensor_index(output_tensor, i, k, r, c);
                             if (k == y)
                             {
-                                loss += weight*scale*-safe_log(g[idx]);
+                                loss += weight*scale*-std::log(g[idx]);
                                 g[idx] = weight*scale*(g[idx] - 1);
                             }
                             else
@@ -2846,7 +2049,7 @@ namespace dlib
                         const size_t idx = tensor_index(output_tensor, i, 0, r, c);
                         const float temp1 = y - out_data[idx];
                         const float temp2 = scale*temp1;
-                        loss += temp2*temp1;
+                        loss += 0.5*temp2*temp1;
                         g[idx] = -temp2;
                     }
                 }
@@ -2891,111 +2094,6 @@ namespace dlib
 
 // ----------------------------------------------------------------------------------------
 
-    class loss_dot_ 
-    {
-    public:
-
-        typedef matrix<float,0,1> training_label_type;
-        typedef matrix<float,0,1> output_label_type;
-
-        template <
-            typename SUB_TYPE,
-            typename label_iterator
-            >
-        void to_label (
-            const tensor& input_tensor,
-            const SUB_TYPE& sub,
-            label_iterator iter
-        ) const
-        {
-            const tensor& output_tensor = sub.get_output();
-            DLIB_CASSERT(sub.sample_expansion_factor() == 1);
-            DLIB_CASSERT(input_tensor.num_samples() != 0);
-            DLIB_CASSERT(input_tensor.num_samples()%sub.sample_expansion_factor() == 0);
-            DLIB_CASSERT(input_tensor.num_samples() == output_tensor.num_samples());
-
-            for (long i = 0; i < output_tensor.num_samples(); ++i)
-                *iter++ = trans(rowm(mat(output_tensor),i));
-        }
-
-
-        template <
-            typename const_label_iterator,
-            typename SUBNET
-            >
-        double compute_loss_value_and_gradient (
-            const tensor& input_tensor,
-            const_label_iterator truth, 
-            SUBNET& sub
-        ) const
-        {
-            const tensor& output_tensor = sub.get_output();
-            tensor& grad = sub.get_gradient_input();
-
-            DLIB_CASSERT(sub.sample_expansion_factor() == 1);
-            DLIB_CASSERT(input_tensor.num_samples() != 0);
-            DLIB_CASSERT(input_tensor.num_samples()%sub.sample_expansion_factor() == 0);
-            DLIB_CASSERT(input_tensor.num_samples() == grad.num_samples());
-            DLIB_CASSERT(input_tensor.num_samples() == output_tensor.num_samples());
-
-            const long network_output_dims = output_tensor.size()/output_tensor.num_samples();
-
-
-            // The loss we output is the average loss over the mini-batch. 
-            const double scale = 1.0/output_tensor.num_samples();
-            double loss = 0;
-            float* g = grad.host();
-            const float* out_data = output_tensor.host();
-            for (long i = 0; i < output_tensor.num_samples(); ++i)
-            {
-                DLIB_CASSERT(truth->size() == network_output_dims, "The network must output a vector with the same dimensionality as the training labels. "
-                    << "\ntruth->size():       " << truth->size()
-                    << "\nnetwork_output_dims: " << network_output_dims); 
-
-                const float* t = &(*truth++)(0);
-
-                for (long j = 0; j < network_output_dims; ++j)
-                {
-                    g[j] = -t[j]*scale;
-                    loss -= out_data[j]*t[j];
-                }
-
-                g += network_output_dims;
-                out_data += network_output_dims;
-            }
-            return loss*scale;
-        }
-
-        friend void serialize(const loss_dot_& , std::ostream& out)
-        {
-            serialize("loss_dot_", out);
-        }
-
-        friend void deserialize(loss_dot_& , std::istream& in)
-        {
-            std::string version;
-            deserialize(version, in);
-            if (version != "loss_dot_")
-                throw serialization_error("Unexpected version found while deserializing dlib::loss_dot_.");
-        }
-
-        friend std::ostream& operator<<(std::ostream& out, const loss_dot_& )
-        {
-            out << "loss_dot";
-            return out;
-        }
-
-        friend void to_xml(const loss_dot_& /*item*/, std::ostream& out)
-        {
-            out << "<loss_dot/>";
-        }
-
-    };
-
-    template <typename SUBNET>
-    using loss_dot = add_loss_layer<loss_dot_, SUBNET>;
-
-// ----------------------------------------------------------------------------------------
 
 }
 

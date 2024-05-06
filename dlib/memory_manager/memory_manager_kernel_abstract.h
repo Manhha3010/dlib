@@ -52,7 +52,7 @@ namespace dlib
                           causes a memory leak. 
             !*/
 
-            size_t get_number_of_allocations (
+            unsigned long get_number_of_allocations (
             ) const;
             /*!
                 ensures
@@ -86,7 +86,7 @@ namespace dlib
             !*/
 
             T* allocate_array (
-                size_t size
+                unsigned long size
             );
             /*!
                 ensures

@@ -13,7 +13,7 @@ namespace dlib
 
     template <
         typename T,
-        size_t chunk_size
+        unsigned long chunk_size
         >
     class memory_manager_kernel_2
     {
@@ -103,11 +103,11 @@ namespace dlib
             }
         }
 
-        size_t get_number_of_allocations (
+        unsigned long get_number_of_allocations (
         ) const { return allocations; }
 
         T* allocate_array (
-            size_t size
+            unsigned long size
         )
         {
             T* temp = new T[size];
@@ -184,7 +184,7 @@ namespace dlib
 
                 ++block;
                 // now add the rest of the block into the linked list of free nodes.
-                for (size_t i = 0; i < chunk_size-1; ++i)
+                for (unsigned long i = 0; i < chunk_size-1; ++i)
                 {
                     block->next = next;
                     next = block;
@@ -223,7 +223,7 @@ namespace dlib
     private:
 
         // data members
-        size_t allocations;
+        unsigned long allocations;
         node* next;
 
         chunk_node* first_chunk;
@@ -238,7 +238,7 @@ namespace dlib
 
     template <
         typename T,
-        size_t chunk_size
+        unsigned long chunk_size
         >
     inline void swap (
         memory_manager_kernel_2<T,chunk_size>& a, 

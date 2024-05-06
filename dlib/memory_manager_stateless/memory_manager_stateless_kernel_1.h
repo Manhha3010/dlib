@@ -4,7 +4,6 @@
 #define DLIB_MEMORY_MANAGER_STATELESs_1_
 
 #include "memory_manager_stateless_kernel_abstract.h"
-#include <memory>
 
 namespace dlib
 {
@@ -48,7 +47,7 @@ namespace dlib
             }
 
             T* allocate_array (
-                size_t size
+                unsigned long size
             ) 
             { 
                 return new T[size];
@@ -63,20 +62,6 @@ namespace dlib
 
             void swap (memory_manager_stateless_kernel_1&)
             {}
-
-            std::unique_ptr<T> extract(
-                T* item
-            )
-            {
-                return std::unique_ptr<T>(item);
-            }
-
-            std::unique_ptr<T[]> extract_array(
-                T* item
-            )
-            {
-                return std::unique_ptr<T[]>(item);
-            }
 
         private:
 

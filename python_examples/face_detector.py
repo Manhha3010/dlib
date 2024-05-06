@@ -27,26 +27,33 @@
 #   Alternatively, if you want to compile dlib yourself then go into the dlib
 #   root folder and run:
 #       python setup.py install
+#   or
+#       python setup.py install --yes USE_AVX_INSTRUCTIONS
+#   if you have a CPU that supports AVX instructions, since this makes some
+#   things run faster.  
 #
 #   Compiling dlib should work on any operating system so long as you have
-#   CMake installed.  On Ubuntu, this can be done easily by running the
-#   command:
-#       sudo apt-get install cmake
+#   CMake and boost-python installed.  On Ubuntu, this can be done easily by
+#   running the command:
+#       sudo apt-get install libboost-python-dev cmake
 #
-#   Also note that this example requires Numpy which can be installed
+#   Also note that this example requires scikit-image which can be installed
 #   via the command:
-#       pip install numpy
+#       pip install scikit-image
+#   Or downloaded from http://scikit-image.org/download.html. 
 
 import sys
 
 import dlib
+from skimage import io
+
 
 detector = dlib.get_frontal_face_detector()
 win = dlib.image_window()
 
 for f in sys.argv[1:]:
     print("Processing file: {}".format(f))
-    img = dlib.load_rgb_image(f)
+    img = io.imread(f)
     # The 1 in the second argument indicates that we should upsample the image
     # 1 time.  This will make everything bigger and allow us to detect more
     # faces.
@@ -69,7 +76,7 @@ for f in sys.argv[1:]:
 # Also, the idx tells you which of the face sub-detectors matched.  This can be
 # used to broadly identify faces in different orientations.
 if (len(sys.argv[1:]) > 0):
-    img = dlib.load_rgb_image(sys.argv[1])
+    img = io.imread(sys.argv[1])
     dets, scores, idx = detector.run(img, 1, -1)
     for i, d in enumerate(dets):
         print("Detection {}, score: {}, face_type:{}".format(

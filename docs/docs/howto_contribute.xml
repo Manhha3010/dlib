@@ -13,10 +13,17 @@
 
         <!--   ****************************   EASY CONTRIBUTIONS  ****************************    -->
 
-        <h2>Contributing Money</h2>
+         There are some simple ways to contribute to dlib:
 
-         The simplest way to contribute is to donate money via Zelle or PayPal
-         to davis@dlib.net. Any amount is appreciated :)
+         <ul>
+            <li> Find confusing or incorrect documentation </li>
+            <li> Help make the web page prettier </li>
+            <li> Link to dlib from your web page </li>
+            <li> Add yourself or your project to the list of 
+            <a href="http://sourceforge.net/p/dclib/wiki/Known_users/">dlib users</a> </li>
+            <li> Try to run the dlib regression test suite on any platforms you
+            have access to </li>
+         </ul>
 
         <!--   ****************************   CODE CONTRIBUTIONS  ****************************    -->
         <h2>Contributing Code</h2>
@@ -27,7 +34,7 @@
          <p> If you want to make a big change or feature addition, it's probably a good idea to talk to me about it first.  
             Additionally, you should read over the coding guidelines below
             and try to follow them.  It is also probably a good idea to read the books Effective C++ and 
-            More Effective C++ by Scott Meyers.    
+            More Effective C++ by Scott Myers.    
          </p>
 
         

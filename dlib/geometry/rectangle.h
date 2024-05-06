@@ -444,13 +444,12 @@ namespace dlib
 
 // ----------------------------------------------------------------------------------------
 
-    template <typename T>
-    inline const dlib::vector<T,2> nearest_point (
+    inline const point nearest_point (
         const rectangle& rect,
-        const dlib::vector<T,2>& p
+        const point& p
     )
     {
-        dlib::vector<T,2> temp(p);
+        point temp(p);
         if (temp.x() < rect.left())
             temp.x() = rect.left();
         else if (temp.x() > rect.right())
@@ -496,11 +495,23 @@ namespace dlib
 
 // ----------------------------------------------------------------------------------------
 
-    template <typename T>
+    template <typename T, typename U>
+    double distance_to_line (
+        const std::pair<vector<T,2>,vector<T,2> >& line,
+        const vector<U,2>& p
+    )
+    {
+        const vector<double,2> delta = p-line.second;
+        const double along_dist = (line.first-line.second).normalize().dot(delta);
+        return std::sqrt(std::max(0.0,delta.length_squared() - along_dist*along_dist));
+    }
+
+// ----------------------------------------------------------------------------------------
+
     inline void clip_line_to_rectangle (
         const rectangle& box,
-        dlib::vector<T,2>& p1,
-        dlib::vector<T,2>& p2
+        point& p1,
+        point& p2
     )
     {
         // Now clip the line segment so it is contained inside box.
@@ -527,16 +538,16 @@ namespace dlib
             //box.left()  == alpha1*(p1.x()-p2.x()) + p2.x();
             //box.right() == alpha2*(p1.x()-p2.x()) + p2.x();
 
-            const dlib::vector<T,2> d = p1-p2;
+            const point d = p1-p2;
             double alpha1 = (box.left()  -p2.x())/(double)d.x();
             double alpha2 = (box.right() -p2.x())/(double)d.x();
             double alpha3 = (box.top()   -p2.y())/(double)d.y();
             double alpha4 = (box.bottom()-p2.y())/(double)d.y();
 
-            const dlib::vector<T,2> c1 = alpha1*d + p2;
-            const dlib::vector<T,2> c2 = alpha2*d + p2;
-            const dlib::vector<T,2> c3 = alpha3*d + p2;
-            const dlib::vector<T,2> c4 = alpha4*d + p2;
+            const point c1 = alpha1*d + p2;
+            const point c2 = alpha2*d + p2;
+            const point c3 = alpha3*d + p2;
+            const point c4 = alpha4*d + p2;
 
             if (!box.contains(p1))
                 p1 = c1;
@@ -571,21 +582,6 @@ namespace dlib
     )
     {
         return centered_rect(p.x(),p.y(),width,height);
-    }
-
-// ----------------------------------------------------------------------------------------
-
-    inline std::vector<rectangle> centered_rects (
-        const std::vector<point>& pts,
-        unsigned long width,
-        unsigned long height
-    )
-    {
-        std::vector<rectangle> tmp;
-        tmp.reserve(pts.size());
-        for (auto& p : pts)
-            tmp.emplace_back(centered_rect(p, width, height));
-        return tmp;
     }
 
 // ----------------------------------------------------------------------------------------
@@ -639,22 +635,6 @@ namespace dlib
     )
     {
         return shrink_rect(rect, -width, -height);
-    }
-
-// ----------------------------------------------------------------------------------------
-
-    inline const rectangle scale_rect (
-        const rectangle& rect,
-        double scale
-    )
-    {
-        DLIB_ASSERT(scale > 0, "scale factor must be > 0");
-
-        long l = (long)std::round(rect.left()*scale);
-        long t = (long)std::round(rect.top()*scale);
-        long r = (long)std::round(rect.right()*scale);
-        long b = (long)std::round(rect.bottom()*scale);
-        return rectangle(l, t, r, b);
     }
 
 // ----------------------------------------------------------------------------------------

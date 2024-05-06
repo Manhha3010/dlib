@@ -5,6 +5,7 @@ set(java_package_name net.dlib)
 set(source_files
    )
 
+include(../cmake_utils/use_cpp_11.cmake)
 include(../cmake_utils/release_build_by_default)
 
 include_directories(
@@ -12,7 +13,7 @@ include_directories(
    )
 
 # Additional dependencies
-#add_subdirectory(../../dlib dlib_build)
+#include(../../dlib/cmake)
 #set(additional_link_libraries dlib::dlib)
 
 # Tell swig to put the output files (the shared library and .jar) into the local folder.

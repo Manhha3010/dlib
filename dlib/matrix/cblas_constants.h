@@ -3,17 +3,7 @@
 #ifndef DLIB_CBLAS_CONSTAnTS_Hh_
 #define DLIB_CBLAS_CONSTAnTS_Hh_
 
-#if !(defined(__GSL_CBLAS_H__) || defined(CBLAS_H))
-
-// Setting this tells other headers to define their own copy of the cblas API so we can
-// call it.  We only do this if some other cblas API hasn't already been included.  
-#define DLIB_DEFINE_CBLAS_API
-
-
-#ifndef CBLAS_INT_TYPE
-#define CBLAS_INT_TYPE int 
-#endif
-
+#ifndef CBLAS_H
 namespace dlib
 {
     namespace blas_bindings
@@ -26,7 +16,7 @@ namespace dlib
 
     }
 }
-#endif 
+#endif // if not CBLAS_H
 
 #endif // DLIB_CBLAS_CONSTAnTS_Hh_
 

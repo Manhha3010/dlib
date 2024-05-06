@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf8" ?>
+<?xml version="1.0" encoding="ISO-8859-1" ?>
    
 <!--
    To the extent possible under law, Davis E King  has waived all copyright and 
@@ -42,7 +42,7 @@
 
    <xsl:variable name="lcletters">abcdefghijklmnopqrstuvwxyz </xsl:variable>
    <xsl:variable name="ucletters">ABCDEFGHIJKLMNOPQRSTUVWXYZ </xsl:variable>
-   <xsl:variable name="badletters">'?()&lt;&gt; /\&amp;~!@#$%^*_+=-[]{}</xsl:variable>
+   <xsl:variable name="badletters">?()&lt;&gt; /\&amp;~!@#$%^*_+=-[]{}</xsl:variable>
    
    <!-- ************************************************************************* -->
 
@@ -731,11 +731,6 @@
          </ul>
       </xsl:if>
    </xsl:template>   
-   <xsl:template match="ol">
-      <ol>
-         <xsl:apply-templates/>
-       </ol>
-   </xsl:template>   
    <xsl:template match="u">
       <u>
          <xsl:apply-templates/>
@@ -785,13 +780,6 @@
       <img src="{@src}" border="0" height="{@height}" width="{@width}" alt="{@alt}">
          <xsl:apply-templates/>
        </img>
-   </xsl:template>   
-   <xsl:template match="video">
-      <video controls="true" poster="{@src}.png">
-         <source src="{@src}.webm" type="video/webm"/>
-         <source src="{@src}.mp4" type="video/mp4"/>
-         <xsl:apply-templates/>
-      </video>
    </xsl:template>   
 
    <xsl:template name="term_list_go">

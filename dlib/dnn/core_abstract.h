@@ -3,7 +3,7 @@
 #undef DLIB_DNn_CORE_ABSTRACT_H_
 #ifdef DLIB_DNn_CORE_ABSTRACT_H_
 
-#include "../cuda/tensor_abstract.h"
+#include "tensor_abstract.h"
 #include <memory>
 #include <type_traits>
 #include <tuple>

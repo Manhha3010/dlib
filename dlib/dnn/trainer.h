@@ -14,7 +14,7 @@
 
 #include "../pipe.h"
 #include "../threads.h"
-#include "../cuda/cuda_dlib.h"
+#include "cuda_dlib.h"
 #include "../statistics/running_gradient.h"
 #include <atomic>
 #include <cstdio>
@@ -55,10 +55,6 @@ namespace dlib
         }
     }
 
-    enum class force_flush_to_disk {
-        no = 0,
-        yes = 1
-    };
 
     template <
         typename net_type, 
@@ -139,11 +135,10 @@ namespace dlib
         }
 
         net_type& get_net (
-            force_flush_to_disk force_flush = force_flush_to_disk::yes
         )  
         { 
             wait_for_thread_to_pause();
-            sync_to_disk(force_flush == force_flush_to_disk::yes);
+            sync_to_disk(true);
             propagate_exception();
             return net; 
         }
@@ -584,8 +579,7 @@ namespace dlib
         void record_test_loss(double loss)
         {
             test_previous_loss_values.push_back(loss);
-            if (is_finite(loss))
-                rs_test.add(loss);
+            rs_test.add(loss);
             // discard really old loss values.
             while (test_previous_loss_values.size() > test_iter_without_progress_thresh)
                 test_previous_loss_values.pop_front();
@@ -593,8 +587,11 @@ namespace dlib
 
         void record_loss(double loss)
         {
-            // This kind of budgeting causes our gradient checking to use a fixed amount of
-            // computational resources, regardless of the size of iter_without_progress_thresh.
+            // Say that we will check if the gradient is bad 200 times during each
+            // iter_without_progress_thresh interval of network updates.   This kind of
+            // budgeting causes our gradient checking to use a fixed amount of
+            // computational resources, regardless of the size of
+            // iter_without_progress_thresh.
             gradient_check_budget += 200;
 
             rs.add(loss);
@@ -702,7 +699,7 @@ namespace dlib
                                 test_steps_without_progress = 0;
                                 // Empty out some of the previous loss values so that test_steps_without_progress 
                                 // will decrease below test_iter_without_progress_thresh.  
-                                for (unsigned long cnt = 0; cnt < test_previous_loss_values_dump_amount+test_iter_without_progress_thresh/10 && test_previous_loss_values.size() > 0; ++cnt)
+                                for (int cnt = 0; cnt < test_previous_loss_values_dump_amount && test_previous_loss_values.size() > 0; ++cnt)
                                     test_previous_loss_values.pop_front();
                             }
                         }
@@ -822,7 +819,7 @@ namespace dlib
                             steps_without_progress = 0;
                             // Empty out some of the previous loss values so that steps_without_progress 
                             // will decrease below iter_without_progress_thresh.  
-                            for (unsigned long cnt = 0; cnt < previous_loss_values_dump_amount+iter_without_progress_thresh/10 && previous_loss_values.size() > 0; ++cnt)
+                            for (int cnt = 0; cnt < previous_loss_values_dump_amount && previous_loss_values.size() > 0; ++cnt)
                                 previous_loss_values.pop_front();
                         }
                     }
@@ -1278,8 +1275,8 @@ namespace dlib
         std::atomic<bool> updated_net_since_last_sync;
 
         bool sync_file_reloaded;
-        unsigned long previous_loss_values_dump_amount;
-        unsigned long test_previous_loss_values_dump_amount;
+        int previous_loss_values_dump_amount;
+        int test_previous_loss_values_dump_amount;
     };
 
 // ----------------------------------------------------------------------------------------
